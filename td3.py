@@ -22,8 +22,11 @@ import pomdp
 rand_seed = 42
 
 environment_name = sys.argv[1]
-model_name = "TD3-{}".format(environment_name)
-run_name = "{}-{}".format(sys.argv[2], model_name)
+run_name_prefix = sys.argv[2]
+pomdp_type = sys.argv[3]
+
+model_name = "TD3-{}-{}".format(environment_name, pomdp_type)
+run_name = "{}-{}".format(run_name_prefix, model_name)
 
 if not os.path.isdir('./models'):
     os.mkdir('./models')
@@ -167,12 +170,12 @@ replay_buffer = []
 # initialize the environments
 env = gym.make(environment_name)
 
-if sys.argv[3] == 'faulty':
+if pomdp_type == 'faulty':
     if environment_name == 'Hopper-v2':
         po_env = pomdp.PartiallyObservableEnv(env, rand_seed, faulty=(20, env.observation_space.shape[0]))
     elif environment_name == 'Ant-v2':
         po_env = pomdp.PartiallyObservableEnv(env, rand_seed, faulty=(20, 27))
-elif sys.argv[3] == 'noisy':
+elif pomdp_type == 'noisy':
     po_env = pomdp.PartiallyObservableEnv(env, rand_seed, noisy=(0, 0.1))
 else:
     po_env = pomdp.PartiallyObservableEnv(env, rand_seed)
@@ -184,12 +187,12 @@ max_action = torch.from_numpy(env.action_space.high).to(device)
 
 test_env = gym.make(environment_name)
 
-if sys.argv[3] == 'faulty':
+if pomdp_type == 'faulty':
     if environment_name == 'Hopper-v2':
         test_po_env = pomdp.PartiallyObservableEnv(test_env, rand_seed, faulty=(20, env.observation_space.shape[0]))
     elif environment_name == 'Ant-v2':
         test_po_env = pomdp.PartiallyObservableEnv(test_env, rand_seed, faulty=(20, 27))
-elif sys.argv[3] == 'noisy':
+elif pomdp_type == 'noisy':
     test_po_env = pomdp.PartiallyObservableEnv(test_env, rand_seed, noisy=(0, 0.1))
 else:
     test_po_env = pomdp.PartiallyObservableEnv(test_env, rand_seed)
