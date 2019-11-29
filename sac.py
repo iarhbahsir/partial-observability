@@ -187,23 +187,32 @@ replay_buffer = []
 
 # initialize train and test environments
 env = gym.make(environment_name)
-# po_env = pomdp.PartiallyObservableEnv(env, rand_seed)
-po_env = pomdp.PartiallyObservableEnv(env, rand_seed, noisy=(0, 0.1))
-# if environment_name == 'Hopper-v2':
-#     po_env = pomdp.PartiallyObservableEnv(env, rand_seed, faulty=(20, env.observation_space.shape[0]))
-# elif environment_name == 'Ant-v2':
-#     po_env = pomdp.PartiallyObservableEnv(env, rand_seed, faulty=(20, 27))
+
+if sys.argv[3] == 'faulty':
+    if environment_name == 'Hopper-v2':
+        po_env = pomdp.PartiallyObservableEnv(env, rand_seed, faulty=(20, env.observation_space.shape[0]))
+    elif environment_name == 'Ant-v2':
+        po_env = pomdp.PartiallyObservableEnv(env, rand_seed, faulty=(20, 27))
+elif sys.argv[3] == 'noisy':
+    po_env = pomdp.PartiallyObservableEnv(env, rand_seed, noisy=(0, 0.1))
+else:
+    po_env = pomdp.PartiallyObservableEnv(env, rand_seed)
 
 curr_state = po_env.reset()
 curr_state = tensor(curr_state).float().to(device)
 
 test_env = gym.make(environment_name)
-# test_po_env = pomdp.PartiallyObservableEnv(test_env, rand_seed)
-test_po_env = pomdp.PartiallyObservableEnv(test_env, rand_seed, noisy=(0, 0.1))
-# if environment_name == 'Hopper-v2':
-#     test_po_env = pomdp.PartiallyObservableEnv(test_env, rand_seed, faulty=(20, env.observation_space.shape[0]))
-# elif environment_name == 'Ant-v2':
-#     test_po_env = pomdp.PartiallyObservableEnv(test_env, rand_seed, faulty=(20, 27))
+
+if sys.argv[3] == 'faulty':
+    if environment_name == 'Hopper-v2':
+        test_po_env = pomdp.PartiallyObservableEnv(test_env, rand_seed, faulty=(20, env.observation_space.shape[0]))
+    elif environment_name == 'Ant-v2':
+        test_po_env = pomdp.PartiallyObservableEnv(test_env, rand_seed, faulty=(20, 27))
+elif sys.argv[3] == 'noisy':
+    test_po_env = pomdp.PartiallyObservableEnv(test_env, rand_seed, noisy=(0, 0.1))
+else:
+    test_po_env = pomdp.PartiallyObservableEnv(test_env, rand_seed)
+
 curr_test_state = test_po_env.reset()
 greatest_avg_episode_rewards = -np.inf
 
