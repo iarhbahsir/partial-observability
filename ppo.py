@@ -114,7 +114,7 @@ class ActorCritic(nn.Module):
         return action_distribution, state_estimate
 
 class PPO:
-    def __init__(self,  statespace_size, actionspace_size, hidden_size, device, discount, learning_rate=3e-4, debug=False, lambda_return = 0.95):
+    def __init__(self,  statespace_size, actionspace_size, hidden_size, device, discount, clipping_epsilon, learning_rate=3e-4, debug=False, lambda_return = 0.95):
 
         self.device = device
         self.actor= Actor(statespace_size, actionspace_size, hidden_size, learning_rate=3e-4).to(device)
@@ -130,6 +130,7 @@ class PPO:
         self.previous_policy = None 
         self.previous_optimizer = None
         self.learning_rate = learning_rate
+        self.clipping_epsilon = clipping_epsilon
         self.average_reward = 0
 
 
@@ -142,7 +143,16 @@ class PPO:
         #print("{} - {}".format(state_value, self.average_reward))
         return state_value - self.average_reward
 
-    def clip(self, reward)
+    def actor_loss(self, advantage, ratio):
+        print(ratio)
+        objective = torch.mul(advantage, ratio)
+        clipped_objective = None
+        if advantage >= advantage.new_zeros(advantage.size()):
+            clipped_objective = torch.mul(advantage, (1.0 + self.clipping_epsilon))
+        else:
+            clipped_objective = torch.mul(advantage, (1.0 - self.clipping_epsilon))
+        
+        return torch.min(clipped_objective,torch.mean(objective))
 
 def __main__():    
     writer = SummaryWriter("help")
@@ -166,9 +176,8 @@ def __main__():
     horizon = 500
     show_first = True
 
-    agent = PPO(statespace_size, actionspace_size, hidden_size, device, discount)
+    agent = PPO(statespace_size, actionspace_size, hidden_size, device, discount, clipping_epsilon)
     
-    torch.save(agent.actor.state_dict(),".tmp0")
     agent.actor.train()
     agent.critic.train()
 
@@ -178,111 +187,105 @@ def __main__():
         error_list = []
         ratio_list = []
         reward_list = []        
+        trajectory = []
 
         previous_reward = None
         previous_value = None
         error = None
+        history = {}
 
-        if iteration > 0:
+        if iteration > 0:            
             agent.previous_policy = Actor(statespace_size, actionspace_size, hidden_size, learning_rate=3e-4).to(device)                
-            print("Loading tmp{}".format(iteration - 1))
-            agent.previous_policy.load_state_dict(torch.load(".tmp{}".format(iteration - 1)))
+            agent.previous_policy.load_state_dict(torch.load(".tmp"))
             agent.previous_policy.eval()
                
-        for step in range(horizon):
+        for step in range(horizon + 1):
             action_distribution = agent.actor.forward(state)
             value = agent.critic.forward(state)
 
             if previous_reward is not None:
                 actor_error = agent.actor_error(previous_reward, previous_value, value)
                 critic_error = agent.critic_error(previous_reward, previous_value, step)
-                error_list.append([actor_error, critic_error])
+                history['actor_error'] = actor_error
+                history['critic_error'] = critic_error
+                trajectory.append(history)
+                history = {}
+                # TODO REMOVE
+                # error_list.append([actor_error, critic_error])
 
             means = action_distribution[0]
             log_deviations =  action_distribution[1]
             log_deviations.register_hook(lambda grad: print("Deviation: {}".format(grad)))
             deviations = torch.tensor([torch.exp(dev)**2 for dev in log_deviations]).to(device)
             action = Normal(means, deviations)
-            distributions.append([means, log_deviations])
+            history['policy_deviation'] = log_deviations
+            # TODO REMOVE
+            # distributions.append([means, log_deviations])
 
             next_state, reward, done, info = pomdp.step(action.sample().cpu())
-            reward_list.append(reward)
+            # TODO REMOVE
+            # reward_list.append(reward)
+            history['reward'] = reward
 
             ratio = None
             equal = True
 
+            # TODO MOVE
             if agent.previous_policy is not None:
 
                 past_distribution = agent.previous_policy.forward(state) 
                 past_deviations = past_distribution[1].detach()
-                ratio = log_deviations - past_deviations
+                history['previous_policy_deviation'] = past_deviations
             else:
-                ratio = log_deviations - log_deviations
+                history['previous_policy_deviation'] = log_deviations.detach()
 
 
-            ratio = torch.exp(ratio)
-            clipped_ratio = agent.clip(ratio)
-            clipped_ratio = torch.clamp(ratio,(1 - clipping_epsilon),(1 + clipping_epsilon))
-            ratio = torch.tensor([min(ratio[i],clipped_ratio[i]) for i in range(len(ratio))],requires_grad=True)
-            test = torch.sum(ratio)
-            test.backward()
-            quit()
+            #ratio = torch.exp(ratio)
+            #clipped_ratio = torch.clamp(ratio,(1 - clipping_epsilon),(1 + clipping_epsilon))
+            #actual_ratio = ratio.new_empty(ratio.size())
 
-            
-            print(ratio)
+            #for i in range(len(ratio)):
+                #actual_ratio[i] = torch.min(ratio[i],clipped_ratio[i])
+                
             previous_reward = reward
             previous_value = value
 
             state = torch.tensor(next_state).float().to(device)
-            ratio_list.append(ratio)
-
-
+            # TODO REMOVE
+            #ratio_list.append(ratio
+            
+        del trajectory[-1]
         reversed_advantages = []
         critic_loss = torch.tensor([0],dtype=torch.float32,requires_grad=True).to(device)
         advantage = torch.tensor([0],dtype=torch.float32,requires_grad=True).to(device)
         advantage.register_hook(lambda grad: print("Advantage: {}".format(grad)))
+        actor_loss = torch.tensor([0],dtype=torch.float32,requires_grad=True).to(device)            
 
-        for backwards_step in reversed(error_list):
+        for history in reversed(trajectory):
             advantage = advantage * agent.lambda_return * agent.discount_rate 
-            advantage += backwards_step[0]
-            # TODO this is not MSE actually I think it is, check critic_error()
-            critic_loss += torch.mul(backwards_step[1], backwards_step[1])
-            reversed_advantages.append(advantage)
-                            
-        critic_loss = critic_loss / len(error_list)
+            ratio = history['policy_deviation'] - history['previous_policy_deviation']
+            advantage += history['actor_error']
+            actor_loss_t = agent.actor_loss(advantage, torch.exp(ratio))
+            actor_loss += actor_loss_t
 
-        loss_list = []
+            critic_loss += torch.mul(history['critic_error'], history['critic_error'])
 
-        for i in range(len(reversed_advantages)):
-            advantage_t = reversed_advantages[len(reversed_advantages) - i - 1]
-            ratio = ratio_list[i]
-            loss = torch.tensor([ advantage_t * val for val in ratio], requires_grad=True).to(device)
-            loss.register_hook(lambda grad: print("Loss : {}".format(grad)))
+        actor_loss = actor_loss/len(trajectory)
+        critic_loss = critic_loss / len(trajectory)
 
-            loss_list.append(loss)
-
-
-
-        loss_list = torch.tensor([torch.sum(lst) for lst in loss_list], requires_grad=True).to(device)
-        # This one registers
-        # loss_list.register_hook(lambda grad: print("Loss List: {}".format(grad)))
-       
-        actor_loss = torch.sum(loss_list)
-        actor_loss = actor_loss/len(loss_list)
-        make_dot(actor_loss)
         neg_actor_loss = -1 * actor_loss
         actor_loss.register_hook(lambda grad: print("Actor Loss: {}".format(grad)))
         agent.actor_optimizer.zero_grad()
         neg_actor_loss.backward(retain_graph=True)
         agent.actor_optimizer.step()
 
-        agent.critic_optimizer.zero_grad()
-        critic_loss.backward()
-        agent.critic_optimizer.step()
+        #agent.critic_optimizer.zero_grad()
+        #critic_loss.backward()
+        #agent.critic_optimizer.step()
 
-        torch.save(agent.actor.state_dict(),".tmp{}".format(iteration + 1))
+        print("Saving actor")
+        torch.save(agent.actor.state_dict(),".tmp")
         
-        #print(agent.average_reward)
         if iteration % 50 == 0:
             print("{}: {}".format(iteration,agent.average_reward))
         agent.average_reward = 0
