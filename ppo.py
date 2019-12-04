@@ -99,6 +99,7 @@ class PPO:
         self.previous_optimizer = None
         self.clipping_epsilon = clipping_epsilon
         self.average_reward = 0
+        self.count = 0
 
 
     def actor_error(self, reward, state_value, next_state_value):
@@ -106,7 +107,8 @@ class PPO:
         return error
 
     def critic_error(self, reward, state_value, timestep):
-        self.average_reward = self.average_reward + (self.average_reward - reward)/timestep
+        self.average_reward = self.average_reward + (reward - self.average_reward)/timestep
+        self.count += 1
         return state_value - self.average_reward
 
     def actor_loss(self, advantage, ratio):
@@ -230,6 +232,7 @@ def __main__():
 
         average_reward = agent.average_reward
         agent.average_reward = 0
+        agent.count = 0
         if best_avg_reward == None or average_reward > best_average_reward:
             best_average_reward = average_reward
             writer.add_scalar('Reward/train', average_reward, iteration)
@@ -249,7 +252,6 @@ def __main__():
             advantage = advantage * agent.lambda_return * agent.discount_rate 
             ratio = history['policy_deviation'] - history['previous_policy_deviation']
             advantage += history['actor_error']
-            #print("Advantage: {}".format(advantage))
             actor_loss_t = agent.actor_loss(advantage, torch.exp(ratio))
             loss_sample['actor_loss'] = actor_loss_t
             actor_loss += actor_loss_t
@@ -283,9 +285,9 @@ def __main__():
             agent.critic_optimizer.step()
             writer.add_scalar('Loss/critic_net', batch_critic_loss.detach().cpu(), iteration)
 
-        
         print("Reward for iteration {}: {}".format(iteration,average_reward, iteration))
-        if iteration % (num_iterations // 4) == 0 or iteration == num_iterations - 1:
+        
+        if iteration % (1000) == 0 or iteration == num_iterations - 1:
             print("Reward for iteration {}: {}".format(iteration,average_reward, iteration))
             torch.save(agent.actor.state_dict(), 'models/{}/{}-actor_net-{}.pt'.format(run_name, model_name, iteration))
             torch.save(agent.critic.state_dict(), 'models/{}/{}-critic_net-{}.pt'.format(run_name, model_name, iteration))
