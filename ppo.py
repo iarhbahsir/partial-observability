@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+import sys
+import random
+import os
 import gym
 import numpy as np
 import torch
@@ -94,7 +97,6 @@ class PPO:
         self.critic_optimizer = optim.Adam(self.critic.parameters(), lr=learning_rate)
         self.previous_policy = None 
         self.previous_optimizer = None
-        self.learning_rate = learning_rate
         self.clipping_epsilon = clipping_epsilon
         self.average_reward = 0
 
@@ -118,15 +120,49 @@ class PPO:
         return torch.min(clipped_objective,torch.mean(objective))
 
 def __main__():    
-    writer = SummaryWriter("help")
+
+    environment_name = sys.argv[1]
+    run_name_prefix = sys.argv[2]
+    pomdp_type = sys.argv[3]
+    seed = 42
+
+    model_name = "PPO-{}-{}".format(environment_name, pomdp_type)
+    run_name = "{}-{}".format(run_name_prefix, model_name)
+
+    if not os.path.isdir('./models'):
+        os.mkdir('./models')
+    if not os.path.isdir('./models/{}'.format(run_name)):
+        os.mkdir('./models/{}'.format(run_name))
+
+    if not os.path.isdir('./runs'):
+        os.mkdir('./runs')
+    if not os.path.isdir('./runs/{}'.format(run_name)):
+        os.mkdir('./runs/{}'.format(run_name))
+
+    writer = SummaryWriter("./runs/{}/".format(run_name))
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     hidden_size = 64 
     discount = 0.99
     clipping_epsilon = 0.2
-    env = gym.make('Hopper-v2')
-    # Let's start simple and do the MDP before we get the rest of this 
-    pomdp = pd.PartiallyObservableEnv(env, seed=42)
+    num_epochs = 10
+    minibatch_size = 64
+    env = gym.make(environment_name)
+    pomdp = None
+
+    if pomdp_type == 'faulty':
+        if environment_name == 'Hopper-v2':
+            pomdp = pd.PartiallyObservableEnv(env, seed, faulty=(20,env.observation_space.shape[0]))
+        else:
+            pomdp = pd.PartiallyObservableEnv(env, seed, faulty=(20,27))
+            
+    elif pomdp_type == 'noisy':
+        pomdp = pd.PartiallyObservableEnv(env, seed, noisy=(0,0.1))
+    else:
+        pomdp = pd.PartiallyObservableEnv(env, seed)
+
     num_iterations = 10000
+    if environment_name == 'Ant-v2':
+        num_iterations = num_iterations * 3
 
     state = torch.tensor(pomdp.reset()).float().to(device)
     statespace_size = pomdp.env.observation_space.shape[0]
@@ -135,7 +171,8 @@ def __main__():
     print("|S|: {}".format(statespace_size))
     print("|A|: {}".format(actionspace_size))
 
-    horizon = 500
+    horizon = 2048
+    best_avg_reward = None
     agent = PPO(statespace_size, actionspace_size, hidden_size, device, discount, clipping_epsilon)
     
     agent.actor.train()
@@ -165,6 +202,7 @@ def __main__():
 
             means = action_distribution[0]
             log_deviations =  action_distribution[1]
+            #log_deviations.register_hook(lambda grad: print(grad))
             deviations = torch.tensor([torch.exp(dev)**2 for dev in log_deviations]).to(device)
             action = Normal(means, deviations)
             history['policy_deviation'] = log_deviations
@@ -183,43 +221,74 @@ def __main__():
             previous_reward = reward
             previous_value = value
             state = torch.tensor(next_state).float().to(device)
-
             
         del trajectory[-1]
-        critic_loss = torch.tensor([0],dtype=torch.float32,requires_grad=True).to(device)
-        advantage = torch.tensor([0],dtype=torch.float32,requires_grad=True).to(device)
-        actor_loss = torch.tensor([0],dtype=torch.float32,requires_grad=True).to(device)            
-
-        for history in reversed(trajectory):
-            advantage = advantage * agent.lambda_return * agent.discount_rate 
-            ratio = history['policy_deviation'] - history['previous_policy_deviation']
-            advantage += history['actor_error']
-            actor_loss_t = agent.actor_loss(advantage, torch.exp(ratio))
-            actor_loss += actor_loss_t
-
-            critic_loss += torch.mul(history['critic_error'], history['critic_error'])
-
-        actor_loss = actor_loss/len(trajectory)
-        critic_loss = critic_loss / len(trajectory)
-
-        neg_actor_loss = -1 * actor_loss
         old_actor_policy = deepcopy(agent.actor.state_dict())
-
-        agent.actor_optimizer.zero_grad()
-        neg_actor_loss.backward(retain_graph=True)
-        agent.actor_optimizer.step()
-
-        agent.critic_optimizer.zero_grad()
-        critic_loss.backward()
-        agent.critic_optimizer.step()
-
         previous_policy = Actor(statespace_size, actionspace_size, hidden_size, learning_rate=3e-4).to(device)                
         previous_policy.load_state_dict(old_actor_policy)
         agent.previous_policy = previous_policy
-        
-        if iteration % 50 == 0:
-            print("{}: {}".format(iteration,agent.average_reward))
+
+        average_reward = agent.average_reward
         agent.average_reward = 0
+        if best_avg_reward == None or average_reward > best_average_reward:
+            best_average_reward = average_reward
+            writer.add_scalar('Reward/train', average_reward, iteration)
+            torch.save(agent.actor.state_dict(), 'models/{}/best-{}-actor_net.pt'.format(run_name, model_name))
+            torch.save(agent.critic.state_dict(), 'models/{}/best-{}-critic_net.pt'.format(run_name, model_name))
+
+        critic_loss = torch.tensor([0],dtype=torch.float32,requires_grad=True).to(device)
+        advantage = torch.tensor([0],dtype=torch.float32,requires_grad=True).to(device)
+        actor_loss = torch.tensor([0],dtype=torch.float32,requires_grad=True).to(device)            
+        timestep = 0
+
+        losses = []
+
+        for history in reversed(trajectory):
+            timestep += 1
+            loss_sample = {}
+            advantage = advantage * agent.lambda_return * agent.discount_rate 
+            ratio = history['policy_deviation'] - history['previous_policy_deviation']
+            advantage += history['actor_error']
+            #print("Advantage: {}".format(advantage))
+            actor_loss_t = agent.actor_loss(advantage, torch.exp(ratio))
+            loss_sample['actor_loss'] = actor_loss_t
+            actor_loss += actor_loss_t
+
+            critic_loss += torch.mul(history['critic_error'], history['critic_error'])
+            loss_sample['critic_loss'] = critic_loss
+            losses.append(loss_sample)
+
+        for epoch in range(num_epochs):
+
+            minibatch = random.choices(losses, k=minibatch_size)
+            batch_critic_loss = torch.tensor([0],dtype=torch.float32,requires_grad=True).to(device)
+            batch_actor_loss = torch.tensor([0],dtype=torch.float32,requires_grad=True).to(device)            
+
+            for sample in minibatch:
+                batch_actor_loss += sample['actor_loss']
+                batch_critic_loss += sample['critic_loss']
+
+            batch_actor_loss = batch_actor_loss/ minibatch_size
+            batch_critic_loss = batch_critic_loss / minibatch_size
+
+            neg_actor_loss = -1 * batch_actor_loss
+
+            agent.actor_optimizer.zero_grad()
+            neg_actor_loss.backward(retain_graph=True)
+            agent.actor_optimizer.step()
+            writer.add_scalar('Loss/actor_net',neg_actor_loss.detach().cpu(), iteration)
+
+            agent.critic_optimizer.zero_grad()
+            batch_critic_loss.backward(retain_graph=True)
+            agent.critic_optimizer.step()
+            writer.add_scalar('Loss/critic_net', batch_critic_loss.detach().cpu(), iteration)
+
+        
+        print("Reward for iteration {}: {}".format(iteration,average_reward, iteration))
+        if iteration % (num_iterations // 4) == 0 or iteration == num_iterations - 1:
+            print("Reward for iteration {}: {}".format(iteration,average_reward, iteration))
+            torch.save(agent.actor.state_dict(), 'models/{}/{}-actor_net-{}.pt'.format(run_name, model_name, iteration))
+            torch.save(agent.critic.state_dict(), 'models/{}/{}-critic_net-{}.pt'.format(run_name, model_name, iteration))
             
 
 if __name__ == '__main__':
