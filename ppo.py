@@ -285,7 +285,6 @@ def __main__():
             agent.critic_optimizer.step()
             writer.add_scalar('Loss/critic_net', batch_critic_loss.detach().cpu(), iteration)
 
-        print("Reward for iteration {}: {}".format(iteration,average_reward, iteration))
         
         if iteration % (1000) == 0 or iteration == num_iterations - 1:
             print("Reward for iteration {}: {}".format(iteration,average_reward, iteration))
