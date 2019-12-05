@@ -206,10 +206,17 @@ def __main__():
             log_deviations =  action_distribution[1]
             #log_deviations.register_hook(lambda grad: print(grad))
             deviations = torch.tensor([torch.exp(dev)**2 for dev in log_deviations]).to(device)
-            action = Normal(means, deviations)
+            action_distribution = Normal(means, deviations)
             history['policy_deviation'] = log_deviations
 
-            next_state, reward, done, info = pomdp.step(action.sample().cpu())
+            action_sample = action_distribution.sample()
+            action = torch.min(action_sample, torch.tensor(pomdp.env.action_space.high).to(device))
+            action = torch.max(action, torch.tensor(pomdp.env.action_space.low).to(device))
+
+            if False in torch.eq(torch.abs(action), torch.ones(action.size()).to(device)):
+               print(action) 
+
+            next_state, reward, done, info = pomdp.step(action.cpu())
             history['reward'] = reward
 
             if agent.previous_policy is not None:
@@ -286,7 +293,7 @@ def __main__():
             writer.add_scalar('Loss/critic_net', batch_critic_loss.detach().cpu(), iteration)
 
         
-        if iteration % (1000) == 0 or iteration == num_iterations - 1:
+        if iteration % (100) == 0 or iteration == num_iterations - 1:
             print("Reward for iteration {}: {}".format(iteration,average_reward, iteration))
             torch.save(agent.actor.state_dict(), 'models/{}/{}-actor_net-{}.pt'.format(run_name, model_name, iteration))
             torch.save(agent.critic.state_dict(), 'models/{}/{}-critic_net-{}.pt'.format(run_name, model_name, iteration))
