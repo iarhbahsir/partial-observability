@@ -15,7 +15,6 @@ from math import exp
 from statistics import mean
 from scipy.stats import norm
 from copy import deepcopy
-from torchviz import make_dot
 
 import tensorboard
 
