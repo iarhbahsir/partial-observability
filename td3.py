@@ -113,9 +113,9 @@ cpu_device = torch.device("cpu")
 
 
 # define actor network
-class TD3LunarLanderContinuousActorNN(nn.Module):
+class TD3ActorNN(nn.Module):
     def __init__(self):
-        super(TD3LunarLanderContinuousActorNN, self).__init__()
+        super(TD3ActorNN, self).__init__()
         self.fc1 = nn.Linear(state_dim, 400)
         self.fc2 = nn.Linear(400, 300)
         self.fc3 = nn.Linear(300, action_dim)
@@ -128,9 +128,9 @@ class TD3LunarLanderContinuousActorNN(nn.Module):
 
 
 # define critic network
-class TD3LunarLanderContinuousCriticNN(nn.Module):
+class TD3CriticNN(nn.Module):
     def __init__(self):
-        super(TD3LunarLanderContinuousCriticNN, self).__init__()
+        super(TD3CriticNN, self).__init__()
         self.fc1 = nn.Linear(state_dim + action_dim, 400)
         self.fc2 = nn.Linear(400, 300)
         self.fc3 = nn.Linear(300, 1)
@@ -144,16 +144,16 @@ class TD3LunarLanderContinuousCriticNN(nn.Module):
 
 
 # Initialize critic networks Qθ1, Qθ2, and actor network πφ with random parameters θ1, θ2, φ
-critic_net_1 = TD3LunarLanderContinuousCriticNN()
-critic_net_2 = TD3LunarLanderContinuousCriticNN()
-actor_net = TD3LunarLanderContinuousActorNN()
+critic_net_1 = TD3CriticNN()
+critic_net_2 = TD3CriticNN()
+actor_net = TD3ActorNN()
 
 # Initialize target networks θ'1 ← θ1, 0'2 ← θ2, φ' ← φ
-critic_target_net_1 = TD3LunarLanderContinuousCriticNN()
+critic_target_net_1 = TD3CriticNN()
 critic_target_net_1.load_state_dict(critic_net_1.state_dict())
-critic_target_net_2 = TD3LunarLanderContinuousCriticNN()
+critic_target_net_2 = TD3CriticNN()
 critic_target_net_2.load_state_dict(critic_net_2.state_dict())
-actor_target_net = TD3LunarLanderContinuousActorNN()
+actor_target_net = TD3ActorNN()
 actor_target_net.load_state_dict(actor_net.state_dict())
 
 # make GPU compatible

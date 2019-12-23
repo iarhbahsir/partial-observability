@@ -77,9 +77,9 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 cpu_device = torch.device("cpu")
 
 
-class TD3LunarLanderContinuousActorNN(nn.Module):
+class TD3ActorNN(nn.Module):
     def __init__(self):
-        super(TD3LunarLanderContinuousActorNN, self).__init__()
+        super(TD3ActorNN, self).__init__()
         self.fc1 = nn.Linear(state_dim, 400)
         self.fc2 = nn.Linear(400, 300)
         self.fc3 = nn.Linear(300, action_dim)
@@ -103,7 +103,7 @@ elif pomdp_type == 'noisy':
 else:
     po_env = pomdp.PartiallyObservableEnv(env, rand_seed)
 
-actor_target_net = TD3LunarLanderContinuousActorNN().to(device)
+actor_target_net = TD3ActorNN().to(device)
 actor_target_net.load_state_dict(torch.load(model_path))
 
 render = True
